@@ -1,79 +1,62 @@
-import path from 'path';
+import path, { resolve } from 'path';
 import fs from 'fs';
 import { createReadStream, createWriteStream } from 'fs';
+import { checkExists, getAbsolutePath } from './path-utils.js';
 
-// Упрощённая проверка существования
-const checkExists = async (targetPath, type = 'file') => {
-    try {
-        await fs.promises.access(targetPath, fs.constants.F_OK);
-        const stats = await fs.promises.lstat(targetPath);
-        if (type === 'file' && !stats.isFile()) throw new Error('Not a file');
-        if (type === 'directory' && !stats.isDirectory()) throw new Error('Not a directory');
-    } catch (error) {
-        throw new Error('Operation failed');
-    }
-};
-
-// Функция для очистки строки readline
 export const clearLine = (rl) => {
     rl.write(null, { ctrl: true, name: 'u' });
 };
 
-// Универсальная обработка ошибок и завершений
-const handleCompletion = (rl, callback, currentDir, message = null, error = false) => {
+const handleCompletion = (rl, callback, currentPath, message = null, error = false) => {
     if (message) console[error ? 'error' : 'log'](message);
     clearLine(rl);
-    if (callback) callback(currentDir);
+    if (callback) callback(currentPath);
 };
 
-// Команда "up"
-export const up = (rl, currentDir, callback) => {
-    const newDir = path.resolve(currentDir, '..');
-    process.chdir(newDir);
-    handleCompletion(rl, callback, newDir);
+export const up = (rl, currentPath, callback) => {
+    const newPath = path.resolve(currentPath, '..');
+    process.chdir(newPath);
+    handleCompletion(rl, callback, newPath);
 };
 
-// Команда "ls"
-export const ls = async (rl, currentDir) => {
+export const ls = async (rl, currentPath) => {
     try {
-        const files = await fs.promises.readdir(currentDir, { withFileTypes: true });
+        const files = await fs.promises.readdir(currentPath, { withFileTypes: true });
         const result = files.map(file => ({
             Name: file.name,
-            Type: file.isDirectory() ? 'directory' : 'file'
+            Type: file.isSymbolicLink() ? 'file (symlink)' :  file.isDirectory() ? 'directory' : 'file'
         })).sort((a, b) => a.Type === b.Type ? a.Name.localeCompare(b.Name) : a.Type === 'directory' ? -1 : 1);
 
         console.table(result);
     } catch (error) {
-        console.error('Operation failed');
+        console.error('Operation failed!!!');
     } finally {
         clearLine(rl);
     }
 };
 
-// Команда "cd"
-export const cd = async (rl, newDir, currentDir, callback) => {
-    if (!newDir) return handleCompletion(rl, callback, currentDir, 'Invalid argument', true);
+export const cd = async (rl, newPath, currentPath, callback) => {
+    if (!newPath) return handleCompletion(rl, callback, currentPath, 'Invalid argument', true);
 
-    const targetDir = path.isAbsolute(newDir) ? newDir : path.resolve(currentDir, newDir);
+    const targetPath = getAbsolutePath(newPath, currentPath);
 
     try {
-        await checkExists(targetDir, 'directory');
-        process.chdir(targetDir);
-        handleCompletion(rl, callback, targetDir);
+        await checkExists(targetPath, 'Directory');
+        process.chdir(targetPath);
+        handleCompletion(rl, callback, targetPath);
     } catch (error) {
-        handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+        handleCompletion(rl, callback, currentPath, 'Operation failed', true);
     }
 };
 
-// Команда "cat"
-export const cat = async (rl, fileDir, currentDir) => {
-    if (!fileDir) return handleCompletion(rl, null, currentDir, 'Invalid argument', true);
+export const cat = async (rl, filePath, currentPath) => {
+    if (!filePath) return handleCompletion(rl, null, currentPath, 'Invalid argument', true);
 
-    const targetDir = path.isAbsolute(fileDir) ? fileDir : path.resolve(currentDir, fileDir);
+    const targetPath = getAbsolutePath(filePath, currentPath);
 
     try {
-        await checkExists(targetDir);
-        const stream = createReadStream(targetDir, 'utf-8');
+        await checkExists(targetPath);
+        const stream = createReadStream(targetPath, 'utf-8');
 
         stream.on('open', () => console.log('----------\tSTART\tOF\tFILE\t----------'));
         stream.on('data', chunk => process.stdout.write(chunk));
@@ -81,90 +64,94 @@ export const cat = async (rl, fileDir, currentDir) => {
             console.log('----------\tEND\tOF\tFILE\t----------');
             clearLine(rl);
         });
-        stream.on('error', () => handleCompletion(rl, null, currentDir, 'Operation failed', true));
+        stream.on('error', () => handleCompletion(rl, null, currentPath, 'Operation failed', true));
     } catch (error) {
-        handleCompletion(rl, null, currentDir, 'Path is not a file!', true);
+        handleCompletion(rl, null, currentPath, 'Path is not a file!', true);
     }
 };
 
-// Команда "add"
-export const add = async (rl, fileName, currentDir, callback) => {
-    if (!fileName) return handleCompletion(rl, callback, currentDir, 'Invalid argument', true);
+export const add = async (rl, fileName, currentPath, callback) => {
+    if (!fileName) return handleCompletion(rl, callback, currentPath, 'Invalid argument', true);
 
-    const targetPath = path.resolve(currentDir, fileName);
+    const targetPath = path.resolve(currentPath, fileName);
 
     try {
         await checkExists(targetPath);
-        handleCompletion(rl, callback, currentDir, `Operation failed: File "${fileName}" already exists.`, true);
+        handleCompletion(rl, callback, currentPath, `Operation failed: File "${fileName}" already exists.`, true);
     } catch {
         try {
             await fs.promises.open(targetPath, 'w');
-            handleCompletion(rl, callback, currentDir, `File "${fileName}" created successfully.`);
+            handleCompletion(rl, callback, currentPath, `File "${fileName}" created successfully.`);
         } catch (error) {
-            handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+            handleCompletion(rl, callback, currentPath, 'Operation failed', true);
         }
     }
 };
 
-// Команда "rn"
-export const rn = async (rl, oldFileName, newFileName, currentDir, callback) => {
-    if (!oldFileName || !newFileName) return handleCompletion(rl, callback, currentDir, 'Invalid argument', true);
+export const rn = async (rl, oldFileName, newFileName, currentPath, callback) => {
+    if (!oldFileName || !newFileName) return handleCompletion(rl, callback, currentPath, 'Invalid argument', true);
 
-    const oldFilePath = path.resolve(currentDir, oldFileName);
-    const newFilePath = path.resolve(currentDir, newFileName);
+    const oldFilePath = path.resolve(currentPath, oldFileName);
+    const newFilePath = path.resolve(currentPath, newFileName);
 
     try {
+
         await checkExists(oldFilePath);
-        await checkExists(newFilePath).catch(() => fs.promises.rename(oldFilePath, newFilePath));
-        handleCompletion(rl, callback, currentDir, `File "${oldFileName}" successfully renamed to "${newFileName}".`);
+
+        const newFileExists = await checkExists(newFilePath).catch(() => false);
+        
+        if (newFileExists) {
+            return handleCompletion(rl, callback, currentPath, `Operation failed: File "${newFileName}" already exists.`, true);
+        }
+
+        await fs.promises.rename(oldFilePath, newFilePath);
+        handleCompletion(rl, callback, currentPath, `File "${oldFileName}" successfully renamed to "${newFileName}".`);
     } catch (error) {
-        handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+        handleCompletion(rl, callback, currentPath, 'Operation failed', true);
     }
 };
 
-// Команда "cp"
-export const cp = async (rl, srcFile, destDir, currentDir, callback) => {
-    if (!srcFile || !destDir) return handleCompletion(rl, callback, currentDir, 'Invalid argument', true);
+export const cp = async (rl, srcFile, destPath, currentPath, callback) => {
+    if (!srcFile || !destPath) return handleCompletion(rl, callback, currentPath, 'Invalid argument', true);
 
-    const srcFilePath = path.isAbsolute(srcFile) ? srcFile : path.resolve(currentDir, srcFile);
-    const destFilePath = path.isAbsolute(destDir) ? destDir : path.resolve(currentDir, destDir);
-
+    const srcFilePath = getAbsolutePath(srcFile, currentPath);
+    const destFilePath = path.resolve(getAbsolutePath(destPath, currentPath),path.basename(srcFile))
     try {
         await checkExists(srcFilePath);
         const readStream = createReadStream(srcFilePath);
         const writeStream = createWriteStream(destFilePath);
 
         readStream.pipe(writeStream);
-        writeStream.on('finish', () => handleCompletion(rl, callback, currentDir, `File "${path.basename(srcFilePath)}" successfully copied to "${destDir}".`));
-        writeStream.on('error', () => handleCompletion(rl, callback, currentDir, 'Operation failed', true));
+        writeStream.on('finish', () => handleCompletion(rl, callback, currentPath, `File "${path.basename(srcFilePath)}" successfully copied to "${destPath}".`));
+        writeStream.on('error', () => handleCompletion(rl, callback, currentPath, 'Operation failed', true));
     } catch (error) {
-        handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+        handleCompletion(rl, callback, currentPath, 'Operation failed', true);
     }
 };
 
-// Команда "mv"
-export const mv = async (rl, srcFile, destDir, currentDir, callback) => {
-    await cp(rl, srcFile, destDir, currentDir, async () => {
+export const mv = async (rl, srcFile, destPath, currentPath, callback) => {
+    await cp(rl, srcFile, destPath, currentPath, async () => {
+        await fs.promises.unlink(srcFile);
+            handleCompletion(rl, callback, currentPath, `File "${path.basename(srcFile)}" successfully moved to "${destPath}".`);
         try {
             await fs.promises.unlink(srcFile);
-            handleCompletion(rl, callback, currentDir, `File "${path.basename(srcFile)}" successfully moved to "${destDir}".`);
+            handleCompletion(rl, callback, currentPath, `File "${path.basename(srcFile)}" successfully moved to "${destPath}".`);
         } catch (error) {
-            handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+            handleCompletion(rl, callback, currentPath, 'Operation failed', true);
         }
     });
 };
 
-// Команда "rm"
-export const rm = async (rl, filePath, currentDir, callback) => {
-    if (!filePath) return handleCompletion(rl, callback, currentDir, 'Invalid argument', true);
+export const rm = async (rl, filePath, currentPath, callback) => {
+    if (!filePath) return handleCompletion(rl, callback, currentPath, 'Invalid argument', true);
 
-    const targetFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(currentDir, filePath);
+    const targetFilePath = getAbsolutePath(filePath, currentPath);
 
     try {
         await checkExists(targetFilePath);
         await fs.promises.unlink(targetFilePath);
-        handleCompletion(rl, callback, currentDir, `File "${path.basename(targetFilePath)}" has been deleted.`);
+        handleCompletion(rl, callback, currentPath, `File "${path.basename(targetFilePath)}" has been deleted.`);
     } catch (error) {
-        handleCompletion(rl, callback, currentDir, 'Operation failed', true);
+        handleCompletion(rl, callback, currentPath, 'Operation failed', true);
     }
 };
