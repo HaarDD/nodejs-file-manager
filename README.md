@@ -1,4 +1,4 @@
-# Assignment: File Manager
+# File Manager
 
 ## Description
 
