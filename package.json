@@ -1,0 +1,24 @@
+{
+    "name": "node-nodejs-file-manager",
+    "version": "1.0.0",
+    "description": "File Manager assignment solution",
+    "main": "src/cli.js",
+    "scripts": {
+        "start": "node src/cli.js"
+    },
+    "engines": {
+        "node": ">=22.9.0"
+    },
+    "type": "module",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/HaarDD/nodejs-file-manager.git"
+    },
+    "keywords": [
+        "nodejs",
+        "assignments",
+        "haardd"
+    ],
+    "author": "Maxim Galitskiy",
+    "license": "ISC"
+}
